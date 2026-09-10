@@ -4,6 +4,10 @@ import os
 import platform
 import socket
 import subprocess
+import sys
+import tempfile
+import urllib.request
+
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -13,6 +17,11 @@ PURPLE = "\033[38;5;183m"
 WHITE = "\033[97m"
 GRAY = "\033[38;5;245m"
 DIM = "\033[2m"
+
+
+REPO_URL = "https://raw.githubusercontent.com/walizka/cloudfetch/main"
+VERSION_URL = f"{REPO_URL}/version"
+INSTALLER_URL = f"{REPO_URL}/install.sh"
 
 
 def read_file(path):
@@ -278,6 +287,7 @@ def get_shell():
 
 
 KNOWN_WMS = {
+    "cloudwm": "CloudWM",
     "dwm": "dwm",
     "vxwm": "vxwm",
     "hyprland": "Hyprland",
@@ -318,6 +328,36 @@ KNOWN_WMS = {
 }
 
 
+def is_cloudwm_running():
+    socket_path = "/tmp/cloudwm.sock"
+
+    if not os.path.exists(socket_path):
+        return False
+
+    sock = None
+
+    try:
+        sock = socket.socket(
+            socket.AF_UNIX,
+            socket.SOCK_STREAM
+        )
+
+        sock.settimeout(0.2)
+        sock.connect(socket_path)
+
+        sock.sendall(b"help\n")
+        sock.recv(128)
+
+        return True
+
+    except OSError:
+        return False
+
+    finally:
+        if sock:
+            sock.close()
+
+
 def get_wm():
     for variable in (
         "XDG_CURRENT_DESKTOP",
@@ -338,7 +378,9 @@ def get_wm():
             if not pid.isdigit():
                 continue
 
-            comm = read_file(f"/proc/{pid}/comm")
+            comm = read_file(
+                f"/proc/{pid}/comm"
+            )
 
             if not comm:
                 continue
@@ -351,7 +393,287 @@ def get_wm():
     except OSError:
         pass
 
+    if is_cloudwm_running():
+        return "CloudWM"
+
     return None
+
+
+def get_current_version():
+    version_file = os.path.expanduser(
+        "~/.cloudfetch/version"
+    )
+
+    version = read_file(version_file)
+
+    if version:
+        return version.strip()
+
+    return None
+
+
+def get_remote_version():
+    try:
+        request = urllib.request.Request(
+            VERSION_URL,
+            headers={
+                "User-Agent": "cloudfetch-updater"
+            },
+        )
+
+        with urllib.request.urlopen(
+            request,
+            timeout=5,
+        ) as response:
+            version = response.read().decode(
+                "utf-8"
+            ).strip()
+
+        if not version:
+            return None
+
+        return version
+
+    except (
+        OSError,
+        urllib.error.URLError,
+        UnicodeDecodeError,
+    ):
+        return None
+
+
+def parse_version(version):
+    if not version:
+        return None
+
+    version = version.strip()
+
+    if version.startswith("v"):
+        version = version[1:]
+
+    parts = version.split(".")
+
+    numbers = []
+
+    for part in parts:
+        number = ""
+
+        for char in part:
+            if char.isdigit():
+                number += char
+            else:
+                break
+
+        if not number:
+            return None
+
+        numbers.append(int(number))
+
+    return tuple(numbers)
+
+
+def versions_equal_or_newer(local, remote):
+    local_version = parse_version(local)
+    remote_version = parse_version(remote)
+
+    if local_version is None or remote_version is None:
+        return None
+
+    length = max(
+        len(local_version),
+        len(remote_version),
+    )
+
+    local_version = local_version + (
+        0,
+    ) * (length - len(local_version))
+
+    remote_version = remote_version + (
+        0,
+    ) * (length - len(remote_version))
+
+    return local_version >= remote_version
+
+
+def save_version(version):
+    directory = os.path.expanduser(
+        "~/.cloudfetch"
+    )
+
+    os.makedirs(
+        directory,
+        exist_ok=True
+    )
+
+    version_file = os.path.join(
+        directory,
+        "version"
+    )
+
+    with open(
+        version_file,
+        "w",
+        encoding="utf-8"
+    ) as file:
+        file.write(version.strip() + "\n")
+
+
+def download_file(url, destination):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "cloudfetch-updater"
+        },
+    )
+
+    with urllib.request.urlopen(
+        request,
+        timeout=15,
+    ) as response:
+        data = response.read()
+
+    with open(destination, "wb") as file:
+        file.write(data)
+
+
+def update_cloudfetch():
+    print()
+    print(
+        f"{CYAN}{BOLD}cloudfetch updater{RESET}"
+    )
+    print()
+
+    local_version = get_current_version()
+
+    if local_version is None:
+        print(
+            f"{GRAY}Current version:{RESET} "
+            f"{WHITE}unknown{RESET}"
+        )
+    else:
+        print(
+            f"{GRAY}Current version:{RESET} "
+            f"{WHITE}{local_version}{RESET}"
+        )
+
+    print(
+        f"{GRAY}Checking for updates...{RESET}"
+    )
+
+    remote_version = get_remote_version()
+
+    if remote_version is None:
+        print(
+            f"{PURPLE}Could not retrieve the "
+            f"remote version.{RESET}"
+        )
+        return 1
+
+    print(
+        f"{GRAY}Latest version:{RESET} "
+        f"{WHITE}{remote_version}{RESET}"
+    )
+
+    if local_version is not None:
+        comparison = versions_equal_or_newer(
+            local_version,
+            remote_version,
+        )
+
+        if comparison is True:
+            print()
+            print(
+                f"{CYAN}cloudfetch is already "
+                f"up to date.{RESET}"
+            )
+            print()
+            return 0
+
+    print()
+    print(
+        f"{CYAN}Update available.{RESET}"
+    )
+    print(
+        f"{GRAY}{local_version or 'unknown'}"
+        f" → {remote_version}{RESET}"
+    )
+    print()
+
+    installer = None
+
+    try:
+        file_descriptor, installer = tempfile.mkstemp(
+            prefix="cloudfetch-installer-",
+            suffix=".sh",
+        )
+
+        os.close(file_descriptor)
+
+        print(
+            f"{GRAY}Downloading installer...{RESET}"
+        )
+
+        download_file(
+            INSTALLER_URL,
+            installer,
+        )
+
+        os.chmod(
+            installer,
+            0o700,
+        )
+
+        print(
+            f"{GRAY}Running installer...{RESET}"
+        )
+        print()
+
+        result = subprocess.run(
+            ["bash", installer],
+            check=False,
+        )
+
+        if result.returncode != 0:
+            print()
+            print(
+                f"{PURPLE}Update failed "
+                f"(installer exit code "
+                f"{result.returncode}).{RESET}"
+            )
+            return result.returncode
+
+        save_version(remote_version)
+
+        print()
+        print(
+            f"{CYAN}{BOLD}cloudfetch updated "
+            f"successfully.{RESET}"
+        )
+        print(
+            f"{GRAY}Version: "
+            f"{remote_version}{RESET}"
+        )
+        print()
+
+        return 0
+
+    except (
+        OSError,
+        urllib.error.URLError,
+    ) as error:
+        print()
+        print(
+            f"{PURPLE}Update failed: "
+            f"{error}{RESET}"
+        )
+        return 1
+
+    finally:
+        if installer:
+            try:
+                os.remove(installer)
+            except OSError:
+                pass
 
 
 def shorten(text, length=31):
@@ -373,19 +695,25 @@ def print_logo():
         "⠀⠀⢱⣆⠀⠈⠓⠒⠒⠚⢅⣶⡊⠀⠈⠸⡉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⠆⠈⠀⠀⠀⣾⠁",
         "⠀⠀⠀⠛⢗⣐⣠⣤⣐⣾⣿⣿⣷⣀⡄⢀⡠⢡⣶⣶⣶⡀⠀⠀⠀⠀⠀⡰⢧⣀⣼⣶⣾⠟⠀⠀",
         "⠀⠀⠀⠀⠀⠀⠀⠀⠉⢿⡼⠿⢿⣿⡿⠋⠉⠉⠉⠸⣿⠯⣿⣶⣶⣶⣿⡿⠏⠉⠉⠁⠀⠀⠀⠀",
-        "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠋⠻⠿⠿⠏⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀",
+        "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀∈≉⠋≉⠀⠀⠀⠀⠀⠀⠀⠋⠻⠿⠿⠏≉⠀⠀⠀⠀⠀⠀⠀⠀⠀",
     ]
 
     for index, line in enumerate(logo):
         if index < 4:
-            print(f"{CYAN}{line}{RESET}")
+            print(
+                f"{CYAN}{line}{RESET}"
+            )
         elif index < 8:
-            print(f"{BLUE}{line}{RESET}")
+            print(
+                f"{BLUE}{line}{RESET}"
+            )
         else:
-            print(f"{PURPLE}{line}{RESET}")
+            print(
+                f"{PURPLE}{line}{RESET}"
+            )
 
 
-def main():
+def print_fetch():
     information = [
         ("os", get_distro()),
         ("kernel", get_kernel()),
@@ -440,5 +768,70 @@ def main():
     print()
 
 
+def print_help():
+    print()
+    print(
+        f"{CYAN}{BOLD}cloudfetch{RESET}"
+    )
+    print()
+    print(
+        f"  {WHITE}cf{RESET}"
+        f"              Show system information"
+    )
+    print(
+        f"  {WHITE}cf -upd{RESET}"
+        f"           Check for updates"
+    )
+    print(
+        f"  {WHITE}cf --update{RESET}"
+        f"       Check for updates"
+    )
+    print(
+        f"  {WHITE}cf update{RESET}"
+        f"           Check for updates"
+    )
+    print(
+        f"  {WHITE}cf --help{RESET}"
+        f"         Show this help"
+    )
+    print(
+        f"  {WHITE}cf -h{RESET}"
+        f"            Show this help"
+    )
+    print()
+
+
+def main():
+    args = sys.argv[1:]
+
+    if not args:
+        print_fetch()
+        return 0
+
+    if args[0] in (
+        "-upd",
+        "--update",
+        "update",
+    ):
+        return update_cloudfetch()
+
+    if args[0] in (
+        "-h",
+        "--help",
+        "help",
+    ):
+        print_help()
+        return 0
+
+    print(
+        f"{PURPLE}Unknown argument: "
+        f"{args[0]}{RESET}"
+    )
+
+    print_help()
+
+    return 1
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import json
 import os
 import platform
 import socket
@@ -18,6 +17,7 @@ BLUE = "\033[38;5;111m"
 PURPLE = "\033[38;5;183m"
 WHITE = "\033[97m"
 GRAY = "\033[38;5;245m"
+DIM = "\033[2m"
 
 
 REPO = "https://github.com/walizka/cloudfetch"
@@ -100,7 +100,10 @@ def get_udev_properties(sys_path):
 
         return properties
 
-    except (OSError, subprocess.SubprocessError):
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ):
         return {}
 
 
@@ -162,7 +165,8 @@ def get_gpu():
         )
 
         if name:
-            name = name.replace("_", " ").strip()
+            name = name.replace("_", " ")
+            name = name.strip()
 
         vendor_name = {
             "0x1002": "AMD",
@@ -398,34 +402,19 @@ def get_wm():
     return None
 
 
-def parse_version(version):
-    if not version:
-        return None
-
-    version = version.strip()
-
-    if version.startswith("v"):
-        version = version[1:]
-
-    parts = version.split(".")
-
-    result = []
-
-    for part in parts:
-        if not part.isdigit():
-            return None
-
-        result.append(int(part))
-
-    return tuple(result)
+def get_version_path():
+    return os.path.join(
+        os.path.dirname(
+            os.path.realpath(__file__)
+        ),
+        "version",
+    )
 
 
 def get_local_version():
-    version_file = os.path.expanduser(
-        "~/.cloudfetch/version"
+    return read_file(
+        get_version_path()
     )
-
-    return read_file(version_file)
 
 
 def get_remote_version():
@@ -455,6 +444,27 @@ def get_remote_version():
         return None
 
 
+def parse_version(version):
+    if not version:
+        return None
+
+    version = version.strip()
+
+    if version.startswith("v"):
+        version = version[1:]
+
+    parts = version.split(".")
+    result = []
+
+    for part in parts:
+        if not part.isdigit():
+            return None
+
+        result.append(int(part))
+
+    return tuple(result)
+
+
 def version_is_newer(local, remote):
     local_version = parse_version(local)
     remote_version = parse_version(remote)
@@ -479,31 +489,6 @@ def version_is_newer(local, remote):
     ) * (length - len(remote_version))
 
     return remote_version > local_version
-
-
-def save_local_version(version):
-    directory = os.path.expanduser(
-        "~/.cloudfetch"
-    )
-
-    os.makedirs(
-        directory,
-        exist_ok=True,
-    )
-
-    version_file = os.path.join(
-        directory,
-        "version",
-    )
-
-    with open(
-        version_file,
-        "w",
-        encoding="utf-8",
-    ) as file:
-        file.write(
-            version.strip() + "\n"
-        )
 
 
 def download_file(url, destination):
@@ -536,16 +521,12 @@ def update_cloudfetch():
 
     local_version = get_local_version()
 
-    if local_version:
-        print(
-            f"{GRAY}Current version:{RESET} "
-            f"{WHITE}{local_version}{RESET}"
-        )
-    else:
-        print(
-            f"{GRAY}Current version:{RESET} "
-            f"{WHITE}unknown{RESET}"
-        )
+    print(
+        f"{GRAY}Current version:{RESET} "
+        f"{WHITE}"
+        f"{local_version or 'unknown'}"
+        f"{RESET}"
+    )
 
     print(
         f"{GRAY}Checking for updates...{RESET}"
@@ -604,8 +585,10 @@ def update_cloudfetch():
 
     print()
     print(
-        f"{GRAY}Downloading installer from "
-        f"Release {remote_version}...{RESET}"
+        f"{GRAY}"
+        f"Downloading installer from "
+        f"Release {remote_version}..."
+        f"{RESET}"
     )
 
     installer_path = None
@@ -631,11 +614,15 @@ def update_cloudfetch():
         )
 
         print(
-            f"{GRAY}Installer downloaded.{RESET}"
+            f"{GRAY}"
+            f"Installer downloaded."
+            f"{RESET}"
         )
 
         print(
-            f"{GRAY}Running installer...{RESET}"
+            f"{GRAY}"
+            f"Running installer..."
+            f"{RESET}"
         )
 
         print()
@@ -659,10 +646,6 @@ def update_cloudfetch():
 
             return result.returncode
 
-        save_local_version(
-            remote_version
-        )
-
         print()
         print(
             f"{CYAN}{BOLD}"
@@ -671,8 +654,10 @@ def update_cloudfetch():
         )
 
         print(
-            f"{GRAY}Version:{RESET} "
-            f"{WHITE}{remote_version}{RESET}"
+            f"{GRAY}"
+            f"Version: "
+            f"{remote_version}"
+            f"{RESET}"
         )
 
         return 0
@@ -681,7 +666,7 @@ def update_cloudfetch():
         print()
         print(
             f"{PURPLE}"
-            f"Failed to download installer:"
+            f"Failed to download installer."
             f"{RESET}"
         )
 
@@ -706,12 +691,9 @@ def update_cloudfetch():
         print()
         print(
             f"{PURPLE}"
-            f"Failed to update cloudfetch:"
+            f"Update failed: "
+            f"{error}"
             f"{RESET}"
-        )
-
-        print(
-            f"{GRAY}{error}{RESET}"
         )
 
         return 1
@@ -722,6 +704,21 @@ def update_cloudfetch():
                 os.remove(installer_path)
             except OSError:
                 pass
+
+
+def show_version():
+    version = get_local_version()
+
+    if version:
+        print(
+            f"cloudfetch {version}"
+        )
+    else:
+        print(
+            "cloudfetch version unknown"
+        )
+
+    return 0
 
 
 def shorten(text, length=31):
@@ -771,6 +768,16 @@ def print_help():
     print(
         f"  {WHITE}cf{RESET}"
         f"              Show system information"
+    )
+
+    print(
+        f"  {WHITE}cf -v{RESET}"
+        f"             Show cloudfetch version"
+    )
+
+    print(
+        f"  {WHITE}cf --version{RESET}"
+        f"       Show cloudfetch version"
     )
 
     print(
@@ -870,6 +877,13 @@ def main():
     if not args:
         print_fetch()
         return 0
+
+    if args[0] in (
+        "-v",
+        "--version",
+        "version",
+    ):
+        return show_version()
 
     if args[0] in (
         "-upd",

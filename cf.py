@@ -814,7 +814,7 @@ def print_fetch():
         ("kernel", get_kernel()),
         ("cpu", get_cpu()),
         ("gpu", get_gpu()),
-        ("local-ip", get_local_ip()),
+        ("ip", get_local_ip()),
         ("ram", get_ram()),
         ("sh", get_shell()),
         ("wm", get_wm()),

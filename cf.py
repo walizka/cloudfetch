@@ -265,19 +265,34 @@ def run_updater():
         )
 
         print(
-            f"{GRAY}Running installer...{RESET}"
+            f"{GRAY}Running installer in update mode...{RESET}"
         )
         print()
 
+        # IMPORTANT:
+        # The release installer supports:
+        #
+        #   bash install.sh
+        #
+        # for a normal installation and:
+        #
+        #   bash install.sh --upd
+        #
+        # for updating an existing cloudfetch installation.
         result = subprocess.run(
-            ["bash", installer_path],
+            [
+                "bash",
+                installer_path,
+                "--upd",
+            ],
             check=False,
         )
 
         if result.returncode != 0:
             print()
             print(
-                f"{PURPLE}Update failed.{RESET}"
+                f"{PURPLE}Update failed "
+                f"with exit code {result.returncode}.{RESET}"
             )
 
             return result.returncode
